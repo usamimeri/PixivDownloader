@@ -37,7 +37,7 @@ def scrape_page(url):
 
 def parse_image_list(html):
     '''返回一个含每个图片链接的生成器，点进去可以获取图片详情以备image_url'''
-    pattern=r'<a href="(?P<image_url>/artworks/\d+)"\s?class="work  _work.*?"\s+target="_blank">'
+    pattern=r'<a href="(?P<image_url>/artworks/\d+)"\s?class="work  _work.*?"\s*?target="_blank">'
     image_urls=re.finditer(pattern=pattern,string=html) #这样必须得指出哪组
     if image_urls:
         for url in image_urls:
@@ -88,5 +88,4 @@ def run(nsfw=False):
             continue
 
 if __name__ == '__main__':
-    pass
     run(True)
