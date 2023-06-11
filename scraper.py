@@ -1,9 +1,10 @@
 import requests
-import re
+from lxml import etree
+import json
 import os
 import logging
-from urllib.parse import urljoin
-from fake_useragent import UserAgent
+# from urllib.parse import urljoin
+# from fake_useragent import UserAgent
 from requests.adapters import HTTPAdapter
 
 logging.captureWarnings(True)
@@ -57,24 +58,32 @@ class RequestHtml:
         except requests.RequestException:
             logging.error(f'爬取页面{url}时发生错误', exc_info=True)
     
-    def save_image(self,url):
-        response = requests.get(url, headers=self.Header.header)
-        try:
-            response = requests.get(url, headers=self.Header.header)
-            if response.status_code == requests.codes.OK:
-                if not os.path.exists(DIR_NAME):
-                    os.makedirs(DIR_NAME)
-                with open(os.path.join(DIR_NAME, os.path.basename(url)), 'wb') as f:  # 注意要是写入模式
-                    try:
-                        f.write(response.content)
-                    except Exception as e:
-                        logging.error(f'保存图片发生错误,url:{url}', e)
+    def save_image(self,info):
+        '''根据传入的图片信息进行处理'''
+        urls=info['urls'] #一图或者多图的url
 
-            else:
-                logging.error(f'不正确的状态码{response.status_code}')
-                
-        except requests.RequestException:
-            logging.error(f'下载图片{url}时发生错误', exc_info=True)
+        for index,url in enumerate(urls):
+            try:
+                response = requests.get(url, headers=self.Header.header)
+                if response.status_code == requests.codes.OK:
+                    if not os.path.exists(DIR_NAME):
+                        os.makedirs(DIR_NAME)
+                    if len(info['urls'])>1:
+                        file_name='_'.join([info['title'],info['id'],str(index+1)]) #多图命名用title_id_1的格式 
+                    else:
+                        file_name='_'.join([info['title'],info['id']])
+
+                    with open(os.path.join(DIR_NAME,file_name+os.path.splitext(url)[1]),'wb') as f:  # 注意要是写入模式,这里增加了扩展名
+                        try:
+                            f.write(response.content)
+                        except Exception as e:
+                            logging.error(f'保存图片发生错误,url:{url}', e)
+
+                else:
+                    logging.error(f'不正确的状态码{response.status_code}')
+                    
+            except requests.RequestException:
+                logging.error(f'下载图片{url}时发生错误', exc_info=True)
     
 
 class PixivParser:
@@ -87,8 +96,7 @@ class PixivParser:
     def artist_illust_uid(self,json_data):
         '''获取一个作者的所有作品的uid'''
         if json_data:
-            from json import loads
-            uid_data=loads(json_data)
+            uid_data=json.loads(json_data)
             try:
                 uid_list=[uid for uid in uid_data['body']['illusts']]
             except:
@@ -99,16 +107,29 @@ class PixivParser:
         else:
             logging.error('出现了空的json_data')
 
-    def get_image_url(self,html):
-        '''根据详情页，返回图片url'''
-        # pattern=r'<img.*?src="(.*?)".*?class="sc-1qpw8k9-1 jOmqKq".*?>'
-        pattern = r'"original":"(?P<image>.*?)"'
-        try:
-            url = re.search(pattern=pattern, string=html).group('image')
-        except Exception as e:
-            logging.error(f'在尝试根据详情页返回图片下载地址时出错,检查html')
-        else:
-            return url
+    def get_image_info(self,image_html,uid):
+        '''返回图片详情'''
+        html=etree.HTML(image_html)
+        js=html.xpath('//meta[@name="preload-data"]/@content')[0]
+        data=json.loads(js)['illust'][uid]
+        url=data['urls']['original']
+        #构造urls列表
+        urls=[f'p{i}'.join(url.split('p0')) for i in range(data['pageCount'])] #先按p0分离再按p页数结合
+        info=dict(
+            id=uid, #图片id
+            userId=data['userIllusts'][uid]['userId'], #作者id
+            userName=data['userIllusts'][uid]['userName'], #作者名
+            tags=data['userIllusts'][uid]['tags'], #tags标签
+            urls=urls, #图片url
+            title=data['title'], #图片标题
+            bookmarkCount=data['bookmarkCount'], #收藏数
+            likeCount=data['likeCount'], #点赞数
+            viewCount=data['viewCount'], #观看数
+            pageCount=data['pageCount'], #图片页数
+            ugoira=('ugoira' in data['urls']['original']),#是否是动图
+            )
+        print(info)
+        return info
         
 class PixivDownloader:
     def __init__(self,Header) -> None:
@@ -122,8 +143,8 @@ class PixivDownloader:
         uid_list=self.pixivparser.artist_illust_uid(json_data) #获取作者所有作品uid
         for uid in tqdm(uid_list):
             html=self.requesthtml.scrape_page(f'https://www.pixiv.net/artworks/{uid}') #进入详情页
-            image_url=self.pixivparser.get_image_url(html) #获取图片的下载url
-            self.requesthtml.save_image(image_url) #下载并保存图片
+            image_info=self.pixivparser.get_image_info(html,uid) #获取图片的下载信息
+            self.requesthtml.save_image(image_info) #下载并保存图片
     
 
 if __name__ == '__main__':
