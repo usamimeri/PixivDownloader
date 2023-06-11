@@ -8,7 +8,7 @@ from tqdm import tqdm_notebook
 # from urllib.parse import urljoin
 from requests.adapters import HTTPAdapter
 from threading import Thread
-
+import time
 logging.captureWarnings(True)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 
@@ -47,12 +47,14 @@ class RequestHtml:
         '''爬取一页，返回页面信息，可以是html或json'''
         try:
             session = requests.session()
-            # max_retries=3 重试3次
-            session.mount('http://', HTTPAdapter(max_retries=3))
-            session.mount('https://', HTTPAdapter(max_retries=3))
+            # max_retries=1 重试1次 后续再更改，因为很多时候三次都是失败的
+            session.mount('http://', HTTPAdapter(max_retries=1))
+            session.mount('https://', HTTPAdapter(max_retries=1))
             response = session.get(url, headers=self.Header.header)
             if response.status_code == requests.codes.OK:
                 return response.text  # 成功就返回页面结果
+            elif response.status_code==429 or str(429):
+                raise '你爬太快了'
             else:
                 logging.error(f'不正确的状态码{response.status_code},请检查{url}')
 
@@ -148,7 +150,7 @@ class PixivDownloader:
         self.requesthtml = RequestHtml(Header=Header)
         self.pixivparser = PixivParser()
 
-    def by_artist(self, uid, thread_num=30 ,verify=True):
+    def by_artist(self, uid,delay=0.5, thread_num=30 ,verify=True):
         '''下载单作者所有作品，可以指定是否断点续传，会先遍历指定文件夹，去除下好的uid，但不能保证因title本身数字导致误删'''
         ARTIST_URL = f'https://www.pixiv.net/ajax/user/{uid}/profile/all?lang=zh:'
         json_data = self.requesthtml.scrape_page(ARTIST_URL)  # 获取ajax的json
@@ -173,34 +175,37 @@ class PixivDownloader:
                 image_info = self.pixivparser.get_image_info(
                     html, uid)  # 获取图片的下载信息
                 self.requesthtml.save_image(image_info)  # 下载并保存图片
+
+                time.sleep(delay)
         
-        threads=[Thread(target=start_download,args=(chunk,)) for chunk in self.split_task(uid_list,thread_num)] 
+        # threads=[Thread(target=start_download,args=(chunk,)) for chunk in self.split_task(uid_list,thread_num)] 
+        threads=[Thread(target=start_download,args=([chunk],)) for chunk in uid_list] 
         for thread in threads:
             thread.start()
         for thread in threads:
             thread.join()
 
-    def split_task(self,tasks, n_threads):
-        """平均分割任务给线程池中的线程数"""
-        if len(tasks)<=n_threads:
-            n_threads=len(tasks)
-        n_per_thread = len(tasks) // n_threads
-        leftover = len(tasks) % n_threads
+    # def split_task(self,tasks, n_threads):
+    #     """平均分割任务给线程池中的线程数"""
+    #     if len(tasks)<=n_threads:
+    #         n_threads=len(tasks)
+    #     n_per_thread = len(tasks) // n_threads
+    #     leftover = len(tasks) % n_threads
 
-        starts = [n_per_thread * i for i in range(n_threads)] 
+    #     starts = [n_per_thread * i for i in range(n_threads)] 
 
-        ends = starts[1:] + [len(tasks)]
-        ends[-1] += leftover
+    #     ends = starts[1:] + [len(tasks)]
+    #     ends[-1] += leftover
 
-        chunks = []
-        for i in range(n_threads):
-            chunks.append(tasks[starts[i]:ends[i]])
-        return chunks
+    #     chunks = []
+    #     for i in range(n_threads):
+    #         chunks.append(tasks[starts[i]:ends[i]])
+    #     return chunks
 
 if __name__ == '__main__':
-    DIR_NAME = ''  # 改成你想放结果的文件夹名
-    COOKIE = 
-    # 改成你的cookie
+    DIR_NAME = ''  # 改成放结果的文件夹名
+    COOKIE = ''
+    # cookie
     header = Header(COOKIE)
     downloader = PixivDownloader(header)
-    downloader.by_artist('',50)
+    downloader.by_artist('',0)
