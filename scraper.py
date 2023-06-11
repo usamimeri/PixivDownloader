@@ -72,10 +72,15 @@ class RequestHtml:
                         file_name='_'.join([info['title'],info['id'],str(index+1)]) #多图命名用title_id_1的格式 
                     else:
                         file_name='_'.join([info['title'],info['id']])
-
-                    with open(os.path.join(DIR_NAME,file_name+os.path.splitext(url)[1]),'wb') as f:  # 注意要是写入模式,这里增加了扩展名
-                        try:
+                    try:
+                        with open(os.path.join(DIR_NAME,file_name+os.path.splitext(url)[1]),'wb') as f:  # 注意要是写入模式,这里增加了扩展名
+                            #这里有个问题，有些作者标题起得不合法！
                             f.write(response.content)
+                    except:
+                        try:
+                            file_name='_'.join([info['id'],str(index+1)])
+                            with open(os.path.join(DIR_NAME,file_name+os.path.splitext(url)[1]),'wb') as f: #发生错误就只保存id了
+                                f.write(response.content)
                         except Exception as e:
                             logging.error(f'保存图片发生错误,url:{url}', e)
 
@@ -135,12 +140,24 @@ class PixivDownloader:
     def __init__(self,Header) -> None:
         self.requesthtml=RequestHtml(Header=Header)
         self.pixivparser=PixivParser()
-    def by_artist(self,uid):
-        '''下载单作者所有作品'''
+    def by_artist(self,uid,verify=True): 
+        '''下载单作者所有作品，可以指定是否断点续传，会先遍历指定文件夹，去除下好的uid，但不能保证因title本身数字导致误删'''
         from tqdm import tqdm
         ARTIST_URL=f'https://www.pixiv.net/ajax/user/{uid}/profile/all?lang=zh:'
         json_data=self.requesthtml.scrape_page(ARTIST_URL) #获取ajax的json
         uid_list=self.pixivparser.artist_illust_uid(json_data) #获取作者所有作品uid
+        if verify:
+            deleted=0
+            if os.path.exists(DIR_NAME):
+                for uid in uid_list.copy(): #必须copy 不然会出错
+                    for file_name in os.listdir(DIR_NAME):
+                        if uid in file_name:
+                            uid_list.remove(uid)
+                            deleted+=1
+                            break
+                logging.info(f'删除了下载好的{deleted}个uid')
+                logging.info(f'目前任务长度{len(uid_list)}')
+
         for uid in tqdm(uid_list):
             html=self.requesthtml.scrape_page(f'https://www.pixiv.net/artworks/{uid}') #进入详情页
             image_info=self.pixivparser.get_image_info(html,uid) #获取图片的下载信息
