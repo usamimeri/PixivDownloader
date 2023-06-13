@@ -33,3 +33,6 @@
 ```
 SSLError(SSLEOFError(8, 'EOF occurred in violation of protocol
 ```
+
+# 结果示例 
+![image](images/result.png)
