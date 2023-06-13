@@ -62,6 +62,7 @@ class RequestHtml:
     def save_image(self, info):
         '''根据传入的图片信息进行处理'''
         urls = info['urls']  # 一图或者多图的url
+        logging.info(f'正在下载uid为{info["id"]}的作品')
 
         for index, url in enumerate(urls):
             try:
@@ -163,22 +164,28 @@ class PixivDownloader:
                             deleted += 1
                             break
                 logging.info(f'删除了下载好的{deleted}个uid')
-                logging.info(f'目前任务长度{len(uid_list)}')
         
         def start_download(uid):
-            logging.info(f'正在下载uid为{uid}的作品')
             html = self.requesthtml.scrape_page(
                 f'https://www.pixiv.net/artworks/{uid}')  # 进入详情页
             image_info = self.pixivparser.get_image_info(
                 html, uid)  # 获取图片详情，比如url和收藏数等等
             # 这里增加一个过滤功能，不满足就立即return
-            if not filters(image_info):
+            if filters==False:
+                filter_result=False
+            else:
+                filter_result=filters(image_info)
+            if not filter_result:
                 self.requesthtml.save_image(image_info)  # 下载并保存图片
+                time.sleep(0.5)
+            else:
+                logging.info(f'过滤了uid为{uid}的作品,因为{filter_result}不满足要求')
+                return
         
         threads=[Thread(target=start_download,args=(uid,)) for uid in uid_list] 
         for thread in threads:
             thread.start()
-        for thread in tqdm(threads):
+        for thread in threads:
             thread.join()
 
 class Filter:
@@ -214,15 +221,16 @@ class Filter:
         for attr, filt in self.filters.items():
             if filt['compare'] == '>':
                 if not item[attr] > filt['value']:
-                    return True
+                    return attr
             elif filt['compare'] == '<':
                 if not item[attr] < filt['value']:
-                    return True
+                    return attr
         return False #这里的意思是不要过滤
 
 if __name__ == '__main__':
     DIR_NAME = ''  # 改成放结果的文件夹名
     COOKIE = ''
+    #改成你的cookie
     filters=Filter()
     filters.add_filters(bookmarkCount={'>':10000},likeCount={'>':6000})
     header = Header(COOKIE)
