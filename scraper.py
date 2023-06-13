@@ -3,9 +3,7 @@ from lxml import etree
 import json
 import os
 import logging
-from tqdm import tqdm_notebook
-# from tqdm import tqdm
-# from urllib.parse import urljoin
+from tqdm.notebook import tqdm
 from requests.adapters import HTTPAdapter
 from threading import Thread
 import time
@@ -32,11 +30,11 @@ class Header:
     def update(self, Cookie: str = None, referer: str = None, user_agent: str = None):
         '''更新请求头'''
         if isinstance(referer, str):
-            self._header['referer'] = referer
+            self.__header['referer'] = referer
         if isinstance(user_agent, str):
-            self._header['user-agent'] = user_agent
+            self.__header['user-agent'] = user_agent
         if Cookie:
-            self._header['Cookie'] = Cookie
+            self.__header['Cookie'] = Cookie
 
 
 class RequestHtml:
@@ -150,7 +148,7 @@ class PixivDownloader:
         self.requesthtml = RequestHtml(Header=Header)
         self.pixivparser = PixivParser()
 
-    def by_artist(self, uid,delay=0.5, thread_num=30 ,verify=True):
+    def by_artist(self, uid,filters=False,verify=True):
         '''下载单作者所有作品，可以指定是否断点续传，会先遍历指定文件夹，去除下好的uid，但不能保证因title本身数字导致误删'''
         ARTIST_URL = f'https://www.pixiv.net/ajax/user/{uid}/profile/all?lang=zh:'
         json_data = self.requesthtml.scrape_page(ARTIST_URL)  # 获取ajax的json
@@ -167,45 +165,66 @@ class PixivDownloader:
                 logging.info(f'删除了下载好的{deleted}个uid')
                 logging.info(f'目前任务长度{len(uid_list)}')
         
-        def start_download(uid_chunk):
-            for uid in uid_chunk:
-                logging.info(f'正在下载uid为{uid}的作品')
-                html = self.requesthtml.scrape_page(
-                    f'https://www.pixiv.net/artworks/{uid}')  # 进入详情页
-                image_info = self.pixivparser.get_image_info(
-                    html, uid)  # 获取图片的下载信息
+        def start_download(uid):
+            logging.info(f'正在下载uid为{uid}的作品')
+            html = self.requesthtml.scrape_page(
+                f'https://www.pixiv.net/artworks/{uid}')  # 进入详情页
+            image_info = self.pixivparser.get_image_info(
+                html, uid)  # 获取图片详情，比如url和收藏数等等
+            # 这里增加一个过滤功能，不满足就立即return
+            if not filters(image_info):
                 self.requesthtml.save_image(image_info)  # 下载并保存图片
-
-                time.sleep(delay)
         
-        # threads=[Thread(target=start_download,args=(chunk,)) for chunk in self.split_task(uid_list,thread_num)] 
-        threads=[Thread(target=start_download,args=([chunk],)) for chunk in uid_list] 
+        threads=[Thread(target=start_download,args=(uid,)) for uid in uid_list] 
         for thread in threads:
             thread.start()
-        for thread in threads:
+        for thread in tqdm(threads):
             thread.join()
 
-    # def split_task(self,tasks, n_threads):
-    #     """平均分割任务给线程池中的线程数"""
-    #     if len(tasks)<=n_threads:
-    #         n_threads=len(tasks)
-    #     n_per_thread = len(tasks) // n_threads
-    #     leftover = len(tasks) % n_threads
+class Filter:
+    def __init__(self):
+        self.filters = {}
+        logging.info('''目前支持的过滤类型有:收藏数bookmarkCount,点赞数likeCount,观看数viewCount,图片页数pageCount
+        输入格式为f.add_filters(pageCount={'<': 20}, bookmarkCount={'>': 50000}),可以以同样格式调用remove方法删除过滤机制''')
+    def add_filter(self, attr, compare, value):
+        self.filters[attr] = {
+            'compare': compare,
+            'value': value
+        }
 
-    #     starts = [n_per_thread * i for i in range(n_threads)] 
+    def add_filters(self, **filters):
+        for attr, params in filters.items():
+            compare, value = params.popitem()
+            self.add_filter(attr, compare, value)
+        logging.info(f'成功添加过滤条件，当前过滤条件为{self.filters}')
 
-    #     ends = starts[1:] + [len(tasks)]
-    #     ends[-1] += leftover
+    def remove_filter(self, attr):
+        self.filters.pop(attr, None)
 
-    #     chunks = []
-    #     for i in range(n_threads):
-    #         chunks.append(tasks[starts[i]:ends[i]])
-    #     return chunks
+    def remove_filters(self, attrs):
+        for attr in attrs:
+            self.remove_filter(attr)  
+        logging.info(f'成功删除过滤条件，当前过滤条件为{self.filters}')
+
+    def reset_filters(self):
+        '''重置过滤器'''
+        self.filters={}
+
+    def __call__(self, item):
+        for attr, filt in self.filters.items():
+            if filt['compare'] == '>':
+                if not item[attr] > filt['value']:
+                    return True
+            elif filt['compare'] == '<':
+                if not item[attr] < filt['value']:
+                    return True
+        return False #这里的意思是不要过滤
 
 if __name__ == '__main__':
     DIR_NAME = ''  # 改成放结果的文件夹名
     COOKIE = ''
-    # cookie
+    filters=Filter()
+    filters.add_filters(bookmarkCount={'>':10000},likeCount={'>':6000})
     header = Header(COOKIE)
     downloader = PixivDownloader(header)
-    downloader.by_artist('',0)
+    downloader.by_artist(uid='',filters=filters)
