@@ -9,7 +9,7 @@
     filters.add_filters(bookmarkCount={'>':10000},likeCount={'>':6000}) #过滤器增加条件
     header = Header(COOKIE)
     downloader = PixivDownloader(header)
-    downloader.by_artist(uid='',filters=filters)
+    downloader.by_artist(uid='',filters=filters,thread_num=30) #设置并发数最大为30
     filters.reset_filters() #可选 重置过滤器
 ```
 2. 断点续传，会先检测已经下好的内容并去除
