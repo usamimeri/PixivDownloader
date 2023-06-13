@@ -3,10 +3,13 @@ from lxml import etree
 import json
 import os
 import logging
-from tqdm.notebook import tqdm
+from requests.exceptions import RequestException
 from requests.adapters import HTTPAdapter
 from threading import Thread
 import time
+from threading import BoundedSemaphore
+from tqdm.notebook import tqdm
+
 logging.captureWarnings(True)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 
@@ -52,7 +55,7 @@ class RequestHtml:
             if response.status_code == requests.codes.OK:
                 return response.text  # 成功就返回页面结果
             elif response.status_code==429 or str(429):
-                raise '你爬太快了'
+                raise RequestException('爬虫过快')
             else:
                 logging.error(f'不正确的状态码{response.status_code},请检查{url}')
 
@@ -89,7 +92,8 @@ class RequestHtml:
                                 f.write(response.content)
                         except Exception as e:
                             logging.error(f'保存图片发生错误,url:{url}', e)
-
+                    finally:
+                        logging.info(f'成功下载uid为{info["id"]}的图片')
                 else:
                     logging.error(f'不正确的状态码{response.status_code}')
 
@@ -110,7 +114,7 @@ class PixivParser:
             try:
                 uid_list = [uid for uid in uid_data['body']['illusts']]
             except:
-                raise f'在读取uid时发生了错误，请检查{json_data}json文件的正确性'
+                raise Exception(f'在读取uid时发生了错误，请检查{json_data}json文件的正确性')
             else:
                 self.log = uid_list
                 return uid_list
@@ -149,11 +153,12 @@ class PixivDownloader:
         self.requesthtml = RequestHtml(Header=Header)
         self.pixivparser = PixivParser()
 
-    def by_artist(self, uid,filters=False,verify=True):
+    def by_artist(self, uid,filters=False,thread_num=40,verify=True):
         '''下载单作者所有作品，可以指定是否断点续传，会先遍历指定文件夹，去除下好的uid，但不能保证因title本身数字导致误删'''
         ARTIST_URL = f'https://www.pixiv.net/ajax/user/{uid}/profile/all?lang=zh:'
         json_data = self.requesthtml.scrape_page(ARTIST_URL)  # 获取ajax的json
         uid_list = self.pixivparser.artist_illust_uid(json_data)  # 获取作者所有作品uid
+        logging.info(f'开始下载作者id:{uid}的作品,共{len(uid_list)}个作品')
         if verify:
             deleted = 0
             if os.path.exists(DIR_NAME):
@@ -164,8 +169,9 @@ class PixivDownloader:
                             deleted += 1
                             break
                 logging.info(f'删除了下载好的{deleted}个uid')
-        
+        semaphore = BoundedSemaphore(thread_num) 
         def start_download(uid):
+            semaphore.acquire()# 添加锁
             html = self.requesthtml.scrape_page(
                 f'https://www.pixiv.net/artworks/{uid}')  # 进入详情页
             image_info = self.pixivparser.get_image_info(
@@ -177,9 +183,10 @@ class PixivDownloader:
                 filter_result=filters(image_info)
             if not filter_result:
                 self.requesthtml.save_image(image_info)  # 下载并保存图片
-                time.sleep(0.5)
+                semaphore.release() #释放锁
             else:
                 logging.info(f'过滤了uid为{uid}的作品,因为{filter_result}不满足要求')
+                semaphore.release() #释放锁
                 return
         
         threads=[Thread(target=start_download,args=(uid,)) for uid in uid_list] 
@@ -228,11 +235,11 @@ class Filter:
         return False #这里的意思是不要过滤
 
 if __name__ == '__main__':
-    DIR_NAME = ''  # 改成放结果的文件夹名
+    DIR_NAME = '加濑大辉'  # 改成放结果的文件夹名
     COOKIE = ''
     #改成你的cookie
     filters=Filter()
-    filters.add_filters(bookmarkCount={'>':10000},likeCount={'>':6000})
+    filters.add_filters(bookmarkCount={'>':8000},likeCount={'>':6000})
     header = Header(COOKIE)
     downloader = PixivDownloader(header)
-    downloader.by_artist(uid='',filters=filters)
+    downloader.by_artist(uid='273185',filters=filters,thread_num=10) #改成画师uid
